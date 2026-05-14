@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: timepad-telegram-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --timeout 30
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TIMEPAD_WEBHOOK_SECRET
+        sync: false
+      - key: TIMEPAD_API_TOKEN
+        sync: false
+      - key: TIMEPAD_EVENT_ID
+        sync: false
