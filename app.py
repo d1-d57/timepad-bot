@@ -96,14 +96,23 @@ def add_ticket(ticket_id: int, price: int, name: str) -> bool:
 
 
 def remove_ticket(ticket_id: int, price: int) -> bool:
-    """Убрать билет (возврат). Возвращает True, если он был учтён."""
+    """
+    Убрать билет (возврат). Возвращает True, если счётчик уменьшился.
+
+    Логика:
+    - Если ticket_id уже был учтён (новая продажа после старта бота) — убираем его
+      из множества и уменьшаем счётчик.
+    - Если ticket_id неизвестен — считаем что это возврат «старого» билета,
+      который был учтён вручную в стартовом состоянии. Всё равно уменьшаем
+      счётчик по соответствующей цене.
+    """
     with state_lock:
-        if ticket_id not in counted_ticket_ids:
-            return False
-        counted_ticket_ids.remove(ticket_id)
+        if ticket_id in counted_ticket_ids:
+            counted_ticket_ids.remove(ticket_id)
         if price in by_price and by_price[price]["count"] > 0:
             by_price[price]["count"] -= 1
-        return True
+            return True
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -111,58 +120,18 @@ def remove_ticket(ticket_id: int, price: int) -> bool:
 # ---------------------------------------------------------------------------
 def load_history() -> None:
     """
-    Попытаться один раз при старте подтянуть историю заказов из Timepad
-    и пересчитать счётчик. Если не получится — стартуем с пустого состояния.
-    Это нормальный режим: новые продажи всё равно будут приходить через вебхук.
+    Инициализация счётчика стартовыми значениями — фиксированные числа
+    проданных билетов на момент запуска бота (взяты вручную из админки Timepad,
+    т.к. Timepad API возвращает 403 на /orders для нашего токена).
+
+    Новые продажи и возвраты будут приходить через вебхук и корректно
+    добавляться/вычитаться. Подробности про обработку возвратов «старых»
+    билетов — в функции timepad_webhook.
     """
-    log.info("Loading order history from Timepad...")
-    headers = {"Authorization": f"Bearer {TIMEPAD_API_TOKEN}"}
-    base_url = f"https://api.timepad.ru/v1/events/{TIMEPAD_EVENT_ID}/orders"
-
-    skip = 0
-    limit = 100
-    total_loaded = 0
-    while True:
-        try:
-            r = requests.get(
-                base_url,
-                headers=headers,
-                params={"limit": limit, "skip": skip},
-                timeout=20,
-            )
-            if r.status_code == 403:
-                log.warning(
-                    "Timepad API returned 403 (no view_visitors permission). "
-                    "Skipping history load — will count only new sales from webhook."
-                )
-                return
-            r.raise_for_status()
-            data = r.json()
-        except Exception:
-            log.warning("Failed to load history — starting from empty state. New sales will still be tracked.")
-            return
-
-        orders = data.get("values", [])
-        if not orders:
-            break
-
-        for order in orders:
-            for ticket in order.get("tickets", []):
-                status = (ticket.get("status_raw_name") or "").lower()
-                if status not in PAID_STATUSES:
-                    continue
-                ticket_id = ticket.get("id")
-                price = int(round(float(ticket.get("price_nominal", 0))))
-                name = ticket.get("ticket_type", {}).get("name", "")
-                if ticket_id is not None:
-                    if add_ticket(ticket_id, price, name):
-                        total_loaded += 1
-
-        if len(orders) < limit:
-            break
-        skip += limit
-
-    log.info("History loaded: %d tickets, summary: %s", total_loaded, format_summary())
+    with state_lock:
+        by_price[800] = {"name": "Входной билет", "count": 78}
+        by_price[1000] = {"name": "Входной билет", "count": 3}
+    log.info("Initialized with manual starting counts: %s", format_summary())
 
 
 # ---------------------------------------------------------------------------
